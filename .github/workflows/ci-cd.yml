@@ -1,0 +1,63 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package.json
+
+      - name: Install dependencies (Backend)
+        run: cd backend && npm ci
+
+      - name: Run Build / Lint Backend
+        run: cd backend && npm run build
+
+  docker-and-smoke-test:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify Environment Variables Example
+        run: |
+          if [ ! -f .env.example ]; then
+            echo "Error: .env.example is missing!"
+            exit 1
+          fi
+
+      - name: Build and start containers with Docker Compose
+        run: docker compose up -d --build
+
+      - name: Wait for services to be healthy
+        run: |
+          echo "Waiting for /health endpoint..."
+          for i in {1..30}; do
+            if curl -s http://localhost:4000/health | grep -q "UP"; then
+              echo "Application is healthy!"
+              exit 0
+            fi
+            echo "Attempt $i: Service not ready yet, waiting 3s..."
+            sleep 3
+          done
+          echo "Error: Health check failed!"
+          docker compose logs
+          exit 1
+
+      - name: Tear down docker environment
+        if: always()
+        run: docker compose down
